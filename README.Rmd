@@ -1,0 +1,259 @@
+---
+title: "US Storm Impact Report"
+date: "July 27, 2014"
+output:
+  html_document:
+    keep_md: yes
+---
+
+#Overview
+This report investigates the following questions to support major storm event preparedness:  
+** Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?  
+** Across the United States, which types of events have the greatest economic consequences?
+
+Regional emergency managers can make best interpret this report within the context of their own region's particular risks. Additionally, long-range preparation that supports [community resilience][4] are beneficial across a broad spectrum of potential threats.
+[4]: http://www.rand.org/topics/community-resilience.html "Community Resilience"
+
+#Analysis Summary  
+This analysis proceeds by downloading the data, then cleaning it up. In particular, the EVTYPE variable needed cleansing and standardizing. Then, metrics were run to summarize the fatalities, injuries, and economic damage caused by the different types of events.
+
+#Context  
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+#Data Source
+
+Data for this report are available, here: [Storm Data][1] [47Mb]  
+
+There is also some documentation of the database available. Here, you will find how some of the variables are constructed/defined.  
+* [National Weather Service Storm Data Documentation][2]  
+* [National Climatic Data Center Storm Events FAQ][3]
+
+[1]: https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2 "Storm Data"
+[2]: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf "National Weather Service Storm Data Documentation"
+[3]: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf "National Climatic Data Center Storm Events FAQ"
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years are considered more complete.
+
+#Data Processing  
+##Load the data  
+Reading directly from bz2 zip file was required.  
+```{r,echo=TRUE}
+#setwd("/Users/yakich/vrygit/repro-research-assignment-2")
+
+library(lattice)
+library(gtools)
+
+#download data
+if(!file.exists("./data")){
+    dir.create("./data")
+}
+fileUrl = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+zipfilepath = "./data/repdata-data-StormData.csv.bz2"
+#unzipfilepath = "./data/repdata-data-StormData.csv"
+if(!file.exists(zipfilepath)){
+    download.file(fileUrl,destfile=zipfilepath,method="curl")
+}
+
+#unzipping failed, however discussion threads indicate I should read the bz2 directly
+#if(!file.exists(unzipfilepath)){
+#    unzip(zipfilepath,overwrite=TRUE, exdir="./data",unzip="internal")
+#}
+
+#load data into R, treat "testing set" as validation
+storm.data.file = bzfile("./data/repdata-data-StormData.csv.bz2")
+storm.data = read.csv(storm.data.file,
+    #comment.char = "#",
+    header = TRUE,
+    sep = ",",
+    colClasses = c("factor","character","character",
+                   "character","factor","character","character",
+                   "character",NA,"character","character",
+                   "character","character",NA,NA,NA,"character","character",
+                   NA,NA,NA,NA,NA,NA,NA,"character",NA,"character","character",
+                   "character","character",NA,NA,NA,NA,"character",NA),
+    as.is = TRUE,
+    strip.white = TRUE,
+    na.strings = c("\t","\t\t","#DIV/0",'""',"")
+    )
+```
+
+##Explore Data  
+```{r,echo=TRUE}
+for(i in colnames(storm.data)){
+    result = table(storm.data[,i])
+    if(dim(result)[1] < 73){
+        print(i)
+        print(result)
+    }
+}
+```
+Notice that some values seem repeated in the table because of whitespace and different capitalization  
+
+##Cleanse the data    
+Data include whitespace and other slightly different spellings, so need to clean up the values, particularly for EVTYPE.
+```{r,echo=TRUE}
+#strip whitespace from character variables 
+#  converting to upper case failed on multibyte character, not worth fixing
+library(stringr)
+for(i in colnames(storm.data)){
+    if(class(storm.data[,i]) == "character"){
+        storm.data[,i] = str_trim(storm.data[,i])
+    }
+}
+#clean up EVTYPE
+storm.data$EVTYPE = toupper(storm.data$EVTYPE)
+
+storm.data$EVTYPE[grepl("SUMMARY",storm.data$EVTYPE)] = NA
+storm.data$EVTYPE[grepl("OTHER",storm.data$EVTYPE)] = NA
+storm.data$windevent = 
+    grepl("WIND",storm.data$EVTYPE) |
+    grepl("BLOW",storm.data$EVTYPE) |
+    grepl("BURST",storm.data$EVTYPE)
+storm.data$heatevent = 
+    grepl("WARM",storm.data$EVTYPE) | 
+    grepl("HEAT",storm.data$EVTYPE) |
+    grepl("HOT",storm.data$EVTYPE) |
+    grepl("HIGH",storm.data$EVTYPE) 
+storm.data$coldevent = 
+    grepl("COLD",storm.data$EVTYPE) | 
+    grepl("FREEZ",storm.data$EVTYPE) | 
+    grepl("COOL",storm.data$EVTYPE) | 
+    grepl("WINTER",storm.data$EVTYPE) | 
+    grepl("WINTRY",storm.data$EVTYPE) | 
+    grepl("WINDCHILL",storm.data$EVTYPE) | 
+    grepl("LOW TEMP",storm.data$EVTYPE) | 
+    grepl("HYPOTHERMIA",storm.data$EVTYPE) 
+storm.data$funnelevent = 
+    grepl("TORNADO",storm.data$EVTYPE) | 
+    grepl("FUNNEL",storm.data$EVTYPE) | 
+    grepl("WATERSPOUT",storm.data$EVTYPE) | 
+    grepl("DUST",storm.data$EVTYPE) |
+    grepl("WALL CLOUD",storm.data$EVTYPE) 
+storm.data$snowiceevent = 
+    grepl("SNOW",storm.data$EVTYPE) | 
+    grepl("BLIZZARD",storm.data$EVTYPE) | 
+    grepl("ICE",storm.data$EVTYPE) | 
+    grepl("ICY",storm.data$EVTYPE) | 
+    grepl("GLAZE",storm.data$EVTYPE) | 
+    grepl("FROST",storm.data$EVTYPE)  
+storm.data$hailsleetevent = 
+    grepl("HAIL",storm.data$EVTYPE) | 
+    grepl("SLEET",storm.data$EVTYPE)  
+storm.data$precipevent = 
+    grepl("RAIN",storm.data$EVTYPE) | 
+    grepl("SNOW",storm.data$EVTYPE) | 
+    grepl("SHOWER",storm.data$EVTYPE) | 
+    grepl("HAIL",storm.data$EVTYPE) | 
+    grepl("SLEET",storm.data$EVTYPE) | 
+    grepl("PRECIP",storm.data$EVTYPE) | 
+    grepl("WET",storm.data$EVTYPE) | 
+    grepl("HEAVY MIX",storm.data$EVTYPE)  
+storm.data$floodevent = 
+    grepl("FLD",storm.data$EVTYPE) | 
+    grepl("FLOOD",storm.data$EVTYPE) | 
+    grepl("FLOYD",storm.data$EVTYPE) | 
+    grepl("STREAM",storm.data$EVTYPE) | 
+    grepl("DAM BREAK",storm.data$EVTYPE)  
+storm.data$thunderstormevent = 
+    grepl("THUNDERSTORM",storm.data$EVTYPE) | 
+    grepl("TSTM",storm.data$EVTYPE) 
+storm.data$lightningevent =
+    grepl("LIGHTNING",storm.data$EVTYPE)  
+storm.data$dryevent =
+    grepl("DROUGHT",storm.data$EVTYPE) |
+    grepl("DRIEST",storm.data$EVTYPE) |
+    grepl("DRY",storm.data$EVTYPE)
+storm.data$fireevent =
+    grepl("FIRE",storm.data$EVTYPE) |
+    grepl("SMOKE",storm.data$EVTYPE) |
+    grepl("ASH",storm.data$EVTYPE) |
+    grepl("FIRE",storm.data$EVTYPE) 
+storm.data$fogevent =
+    grepl("FOG",storm.data$EVTYPE) 
+storm.data$lightningevent =
+    grepl("LIGHT",storm.data$EVTYPE) 
+storm.data$hurricaneevent = 
+    grepl("HURRICANE",storm.data$EVTYPE) |
+    grepl("TROPICAL STORM",storm.data$EVTYPE) |
+    grepl("COASTAL",storm.data$EVTYPE) |
+    grepl("TYPHOON",storm.data$EVTYPE) |
+    grepl("GUSTNADO",storm.data$EVTYPE) 
+storm.data$slideevent =
+    grepl("SLIDE",storm.data$EVTYPE) |
+    grepl("AVALAN",storm.data$EVTYPE) |
+    grepl("LANDSLUMP",storm.data$EVTYPE)
+storm.data$waterevent =
+    grepl("CURRENT",storm.data$EVTYPE) |
+    grepl("STORM SURGE",storm.data$EVTYPE) |
+    grepl("SURF",storm.data$EVTYPE) |
+    grepl("TIDE",storm.data$EVTYPE) |
+    grepl("TSUNAMI",storm.data$EVTYPE) |
+    grepl("SEICHE",storm.data$EVTYPE) |
+    grepl("SWELL",storm.data$EVTYPE) |
+    grepl("WAVE",storm.data$EVTYPE) |
+    grepl("HEAVY SEAS",storm.data$EVTYPE) |
+    grepl("ROUGH SEAS",storm.data$EVTYPE) |
+    grepl("HIGH SEAS",storm.data$EVTYPE) |
+    grepl("HIGH WATER",storm.data$EVTYPE) 
+
+#in increasing order of importance
+storm.data$event = NA
+storm.data$event[is.na(storm.data$event)] = "UNKNOWN/OTHER"
+storm.data$event[storm.data$windevent] = "OTHER WIND EVENT"
+storm.data$event[storm.data$precipevent] = "OTHER PRECIPITATION"
+storm.data$event[storm.data$coldevent] = "OTHER COLD EVENTS"
+storm.data$event[storm.data$heatevent] = "OTHER HEAT EVENTS"
+storm.data$event[storm.data$snowiceevent] = "SNOW/ICE"
+storm.data$event[storm.data$hailsleetevent] = "HAIL/SLEET"
+storm.data$event[storm.data$fogevent] = "FOG"
+storm.data$event[storm.data$lightningevent] = "LIGHTNING"
+storm.data$event[storm.data$dryevent] = "DRY/DROUGHT"
+storm.data$event[storm.data$waterevent] = "WATER EVENTS OTHER THAN FLOOD"
+storm.data$event[storm.data$slideevent] = "MUD/LAND SLIDE, AVALANCHE"
+storm.data$event[storm.data$thunderstormevent] = "THUNDERSTORM"
+storm.data$event[storm.data$floodevent] = "FLOOD"
+storm.data$event[storm.data$funnelevent] = "TORNADO/DUST DEVIL/STORM"
+storm.data$event[storm.data$hurricaneevent] = "HURRICANE/TROPICAL STORM/TYPHOON"
+storm.data$event[storm.data$fireevent] = "FIRE"
+#fill in the remaining to roll those up similarly to the key categories above
+```
+
+#Population Health Impacts
+##Fatlities by event category
+```{r, echo=TRUE}
+eventtypes = unique(storm.data$event)
+eventcounts = sapply(eventtypes,
+       function(x) sum(storm.data$FATALITIES[storm.data$event == x],na.rm=TRUE))
+sort(eventcounts,decreasing = TRUE)
+```
+
+##Injuries by event category
+```{r, echo=TRUE}
+eventtypes = unique(storm.data$event)
+eventcounts = sapply(eventtypes,
+       function(x) sum(storm.data$INJURIES[storm.data$event == x],na.rm=TRUE))
+sort(eventcounts,decreasing = TRUE)
+```
+
+#Economic Impacts 
+Total Crop and Property damage
+```{r, echo=TRUE,fig.height=8,fig.width=8}
+eventtypes = unique(storm.data$event)
+eventcounts = sapply(eventtypes,
+       function(x) {
+            sum(storm.data$PROPDMG[storm.data$event == x],na.rm=TRUE) +
+            sum(storm.data$CROPDMG[storm.data$event == x],na.rm=TRUE) +
+        })
+eventcounts = sort(eventcounts,decreasing = TRUE)
+str(eventcounts)
+barplot(eventcounts,col = c(1,2,3,4,5,6,7,8,9),horiz = TRUE,beside=TRUE,main="Total crop and property damage",legend=names(eventcounts),axisnames=FALSE)
+```
+
+#Results
+Tornados (along with dust devils & dust storms) cause the most fatalities. Heat, fire, flood, and lightning follow behind.
+Tornados (along with dust devils & dust storms) cause the most injuries. Heat, thunderstorms, flood, and lightning follow behind.
+Tornados (along with dust devils & dust storms) cause the most property damage. Heat, thunderstorm, flood, and lightning follow behind.
+
+Further analysis should tease out the distinction between tornados, dust devils, and dust storms.
